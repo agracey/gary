@@ -1,9 +1,12 @@
 use crate::cluster_api;
 use crate::cluster_management;
 use crate::deployment_management;
+use crate::runtime_plugin_manager;
 use clap::{App, Arg};
+use core::config::*;
 use daemonize::Daemonize;
 // use std::sync::mpsc::{Receiver, Sender};
+use std::env;
 use std::sync::mpsc;
 use std::thread;
 
@@ -48,11 +51,24 @@ pub fn cli() {
         )
         .get_matches();
 
+    let mut runtime_plugin_manager = runtime_plugin_manager::RuntimePluginManager::new();
+
+    let mut dockerBox = Box::from(gary_docker::ContainerdRuntimePlugin::new());
+    runtime_plugin_manager.load_in_memory_plugin(dockerBox);
+
+    let mut cur_dir = env::current_dir().unwrap();
+    cur_dir.push("plugins");
+    println!("{}", cur_dir.to_str().unwrap());
+    runtime_plugin_manager.load_plugins_in_dir(String::from(cur_dir.to_str().unwrap()));
+
+    runtime_plugin_manager.start_workload("na".to_string(), "docker".to_string());
+
+    let config = core::config::ClusterConfig::get_config_or_default(matches.value_of("config"));
+
     let mut node_hash: HashMap<String, DateTime<Utc>> = HashMap::new();
 
-    let mut targets: Vec<String> = Vec::new();
     if matches.is_present("target") {
-        let mut t = matches.values_of("target").unwrap();
+        let t = matches.values_of("target").unwrap();
         for f in t {
             node_hash.insert(String::from(f), Utc::now());
         }
@@ -71,15 +87,15 @@ pub fn cli() {
             .user("root")
             .group("daemon");
         match daemonize.start() {
-            Ok(_) => run(cluster_nodes),
+            Ok(_) => run(cluster_nodes, config),
             Err(e) => println!("Should log failure to become daemon. error: {}", e),
         };
     } else {
-        run(cluster_nodes);
+        run(cluster_nodes, config);
     }
 }
 
-fn run(targets: Arc<Mutex<HashMap<String, DateTime<Utc>>>>) {
+fn run(targets: Arc<Mutex<HashMap<String, DateTime<Utc>>>>, init_config: ClusterConfig) {
     println!("Starting server");
 
     // cluster consts - need to be CLI args
@@ -87,7 +103,7 @@ fn run(targets: Arc<Mutex<HashMap<String, DateTime<Utc>>>>) {
     // const NODELISTENERPORT: u16 = 5555;
 
     //create thread channels
-    let (tx_cm, rx_cm): (mpsc::Sender<&str>, mpsc::Receiver<&str>) = mpsc::channel();
+    let (_tx_cm, rx_cm): (mpsc::Sender<&str>, mpsc::Receiver<&str>) = mpsc::channel();
     let (tx_dm, rx_dm): (mpsc::Sender<&str>, mpsc::Receiver<&str>) = mpsc::channel();
     // Channel to main thread for debug
     let (tx_mt, rx_mt): (mpsc::Sender<&str>, mpsc::Receiver<&str>) = mpsc::channel();
